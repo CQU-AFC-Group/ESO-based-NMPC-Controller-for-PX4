@@ -4,12 +4,17 @@
 using namespace std;
 using namespace uav_utils;
 
-PX4CtrlFSM::PX4CtrlFSM(Parameter_t &param_, MPCController &controller_) : param(param_), controller(controller_) /*, thrust_curve(thrust_curve_)*/
+PX4CtrlFSM::PX4CtrlFSM(Parameter_t &param_, MPCController &controller_) : param(param_), controller(controller_), observer(null_observer) /*, thrust_curve(thrust_curve_)*/
 {
 	state = MANUAL_CTRL;
 	hover_pose.setZero();
 }
 
+PX4CtrlFSM::PX4CtrlFSM(Parameter_t &param_, MPCController &controller_, NonlinearESO &observer_) : param(param_), controller(controller_), observer(observer_)
+{
+	state = MANUAL_CTRL;
+	hover_pose.setZero();
+}
 /* 
         Finite State Machine
 

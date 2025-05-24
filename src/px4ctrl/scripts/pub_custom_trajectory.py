@@ -81,7 +81,7 @@ class TrajectoryPublisher:
         elif traj_type == "circle":
             # 修正圆形轨迹公式 (半径2米，周期8秒)
             radius = 2.0
-            omega = 2 * math.pi / 8
+            omega = 2 / radius
             
             self.cmd_msg.position.x = radius * math.cos(omega * t)
             self.cmd_msg.position.y = radius * math.sin(omega * t)

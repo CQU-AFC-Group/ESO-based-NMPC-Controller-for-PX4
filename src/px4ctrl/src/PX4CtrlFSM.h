@@ -14,6 +14,7 @@
 // #include "ThrustCurve.h"
 // #include "controller.h"
 #include "MPCController.h"
+#include "NonlinearESO.hpp"
 
 struct AutoTakeoffLand_t
 {
@@ -42,6 +43,8 @@ public:
 
 	// LinearControl &controller;
 	MPCController &controller;
+	NonlinearESO &observer;
+	NonlinearESO null_observer;
 
 	ros::Publisher traj_start_trigger_pub;
 	ros::Publisher ctrl_FCU_pub;
@@ -65,6 +68,7 @@ public:
 	};
 
 	PX4CtrlFSM(Parameter_t &, MPCController &);
+	PX4CtrlFSM(Parameter_t &, MPCController &, NonlinearESO &);
 	void process();
 	bool rc_is_received(const ros::Time &now_time);
 	bool cmd_is_received(const ros::Time &now_time);

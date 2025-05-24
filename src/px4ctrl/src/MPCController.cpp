@@ -5,18 +5,21 @@ MPCController::MPCController() : solver_initialized_(false)
 {
 
     // 初始化参数
-    param_.horizon = 10;
+    param_.horizon = 15;
     param_.dt = 0.01;
-
     // 设置权重矩阵
-    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 30;
-    param_.Q_p(2, 2) = 80;
-    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 1;
-    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 5;
-    param_.R(0, 0) = 0.005;
+    // 水平通道
+    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 40;      
+    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 2.5;     
+    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 10;
+    // 垂直通道
+    param_.Q_p(2, 2) = 100;
+    param_.Q_v(2, 2) = 0.75;
+    param_.R(0, 0) = 0.002;
+
     param_.mass = 1.62;
     param_.gravity = 9.81;
-    param_.thrust_limit = 30.0;
+    // param_.thrust_limit = 30.0;
     // 初始化求解器
     initializeSolver();
 }    
@@ -81,7 +84,7 @@ bool MPCController::estimateThrustModel(const Eigen::Vector3d &est_a,const Param
 
 void MPCController::resetThrustMapping(void)
 {
-    thr2acc_ = param_.gravity / 0.65;
+    thr2acc_ = param_.gravity / 0.5;
     P_ = 1e6;
 }
 
@@ -207,7 +210,7 @@ void MPCController::initializeSolver()
     casadi::SX Q_p_casadi = eigenToCasadi(param_.Q_p);
     casadi::SX Q_v_casadi = eigenToCasadi(param_.Q_v);
     casadi::SX R_casadi = eigenToCasadi(param_.R);
-
+    casadi::SX u_k_last = casadi::SX::zeros(4);
     // 构建目标函数和约束
     for (int k = 0; k < param_.horizon; ++k)
     {
@@ -234,13 +237,16 @@ void MPCController::initializeSolver()
         g.push_back(u_k(2)); // pitch
         g.push_back(u_k(3)); // yaw
         // g.push_back(u_k(2) * u_k(2) + u_k(3) * u_k(3) + u_k(4) * u_k(4) - 1);
+        if (k > 0){
+            g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0)));  // dot_thrust
+            g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1)));  // dot_phi
+            g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2)));  // dot_theta
+        }
+
+        u_k_last = u_k;
         // 更新当前状态
         x_current = x_next;
     }
-
-    // 终端状态约束（可选）
-    // casadi::SX e_p_terminal = x_current(casadi::Slice(0, 3)) - X_ref(casadi::Slice(0, 3));
-    // g.push_back(e_p_terminal);
 
     // 定义优化问题
     casadi::SXDict nlp = {
@@ -251,7 +257,7 @@ void MPCController::initializeSolver()
 
     // 设置求解器选项
     casadi::Dict solver_opts;
-    solver_opts["ipopt.tol"] = 1e-4;
+    solver_opts["ipopt.tol"] = 1e-5;
     solver_opts["ipopt.max_iter"] = 100;
     solver_opts["ipopt.print_level"] = 0;
     solver_opts["print_time"] = 0;
@@ -418,7 +424,7 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         // ubg.push_back(param_.thrust_limit);
 
         lbg.push_back(0.2);
-        ubg.push_back(0.8);
+        ubg.push_back(0.9);
 
         // // 四元数约束
         // lbg.push_back(0);
@@ -431,6 +437,17 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         ubg.push_back(10);
         lbg.push_back(0);   //yaw
         ubg.push_back(0);
+
+        if (i > 0)
+        {
+            lbg.push_back(0); // dot_thrust
+            ubg.push_back(0.05);
+            lbg.push_back(0); // dot_pitch
+            ubg.push_back(0.01);
+            lbg.push_back(0); // dot_theta
+            ubg.push_back(0.01);
+        }
+        
     }
 
     arg["lbg"] = lbg;

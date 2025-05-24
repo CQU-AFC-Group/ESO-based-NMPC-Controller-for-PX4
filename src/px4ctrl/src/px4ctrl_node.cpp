@@ -22,8 +22,9 @@ int main(int argc, char *argv[])
     // Controller controller(param);
     // LinearControl controller(param);
     MPCController controller;
+    NonlinearESO observer();
     PX4CtrlFSM fsm(param, controller);
-    
+
     ros::Subscriber state_sub =
         nh.subscribe<mavros_msgs::State>("/mavros/state",
                                          10,
