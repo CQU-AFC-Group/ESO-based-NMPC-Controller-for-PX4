@@ -320,7 +320,8 @@ void PX4CtrlFSM::process()
 	}
 	else
 	{
-		debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
+		// debug_msg = controller.calculateControl(des, odom_data, imu_data, u);
+		debug_msg = controller.calculateControl(des, odom_data, imu_data, u, observer);
 		debug_msg.header.stamp = now_time;
 		debug_pub.publish(debug_msg);
 	}

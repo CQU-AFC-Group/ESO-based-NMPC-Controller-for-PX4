@@ -8,6 +8,7 @@
 #include <casadi/casadi.hpp>
 #include <Eigen/Dense>
 #include <stdio.h>
+#include "NonlinearESO.hpp"
 
 // 定义模型函数指针类型
 using ModelPtr = casadi::SX (*)(const casadi::SX &, const casadi::SX &);
@@ -75,6 +76,7 @@ private:
     // 控制输入: [总推力(1), 姿态角(3)]
     Eigen::Matrix<double, 4, 1> control_;
 
+    // 没有使用
     ModelPtr model;
 
     // CasADi优化器
@@ -135,6 +137,12 @@ public:
                                                   const Odom_Data_t &odom,
                                                   const Imu_Data_t &imu,
                                                   Controller_Output_t &u);
+
+    quadrotor_msgs::Px4ctrlDebug calculateControl(const Desired_State_t &des,
+                                                  const Odom_Data_t &odom,
+                                                  const Imu_Data_t &imu,
+                                                  Controller_Output_t &u,
+                                                  NonlinearESO &observer);
 
     bool estimateThrustModel(const Eigen::Vector3d &est_a,
                              const Parameter_t &param);

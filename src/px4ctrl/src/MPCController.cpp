@@ -495,3 +495,119 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
 
     return debug_msg_;
 }
+
+// 主控制计算函数
+quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State_t &des,
+                                                             const Odom_Data_t &odom,
+                                                             const Imu_Data_t &imu,
+                                                             Controller_Output_t &u,
+                                                             NonlinearESO &observer)
+{
+
+    // 更新当前状态
+    state_.segment(0, 3) = odom.p.cast<double>(); // 位置
+    state_.segment(3, 3) = odom.v.cast<double>(); // 速度
+
+    // 构建参考状态
+    Eigen::Matrix<double, 6, 1> ref_state;
+    ref_state.segment(0, 3) = des.p; // 期望位置
+    ref_state.segment(3, 3) = des.v; // 期望速度
+    casadi::DM thr2acc_dm = casadi::DM::zeros(1, 1);
+    thr2acc_dm(0, 0) = thr2acc_;
+    // 设置求解器输入
+    casadi::DM p = casadi::DM::vertcat({casadi::DM::reshape(
+                                            casadi::DM(std::vector<double>(state_.data(), state_.data() + state_.size())),
+                                            state_.size(), 1),
+                                        casadi::DM::reshape(
+                                            casadi::DM(std::vector<double>(ref_state.data(), ref_state.data() + ref_state.size())),
+                                            ref_state.size(), 1),
+                                        thr2acc_dm});
+
+    // 求解优化问题
+    casadi::DMDict arg = {{"p", p}};
+
+    // 设置约束边界
+    std::vector<double> lbg, ubg;
+
+    for (int i = 0; i < param_.horizon; ++i)
+    {
+        // 控制约束
+        // 推力范围
+        // lbg.push_back(0.5 * param_.mass * param_.gravity);
+        // ubg.push_back(param_.thrust_limit);
+
+        lbg.push_back(0.2);
+        ubg.push_back(0.9);
+
+        // // 四元数约束
+        // lbg.push_back(0);
+        // ubg.push_back(0);
+
+        // 欧拉角约束
+        lbg.push_back(-10); // roll
+        ubg.push_back(10);
+        lbg.push_back(-10); // pitch
+        ubg.push_back(10);
+        lbg.push_back(0); // yaw
+        ubg.push_back(0);
+
+        if (i > 0)
+        {
+            lbg.push_back(0); // dot_thrust
+            ubg.push_back(0.05);
+            lbg.push_back(0); // dot_pitch
+            ubg.push_back(0.01);
+            lbg.push_back(0); // dot_theta
+            ubg.push_back(0.01);
+        }
+    }
+
+    arg["lbg"] = lbg;
+    arg["ubg"] = ubg;
+    // 调试输出
+    // std::cout << "实际参数维度: " << p.size1() << "x" << p.size2()
+    //           << " (期望值:13x1)" << std::endl;
+    // 求解
+    casadi::DMDict res = solver_(arg);
+    casadi::DM U_opt = casadi::DM::reshape(res.at("x"), 4, param_.horizon);
+
+    // 提取最优控制输入（推力和期望姿态）
+    Eigen::Matrix<double, 4, 1> u_opt;
+    for (int i = 0; i < 4; ++i)
+    {
+        u_opt(i) = static_cast<double>(U_opt(i, 0)); // 类型转换
+    }
+    // Eigen::Quaterniond des_q(u_opt(1), u_opt(2), u_opt(3), u_opt(4));
+    Eigen::Quaterniond des_q = Eigen::AngleAxisd(u_opt(3), Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(u_opt(2), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(u_opt(1), Eigen::Vector3d::UnitX());
+    
+    // 更新观测器
+    observer.update(odom.p, u_opt(0), u_opt.tail<3>());
+    std::vector<double> out = {0, 0, 0};
+    observer.getDisturbanceEstimate(out.data());
+    // 更新控制器输出
+    u.thrust = u_opt(0) / param_.mass / thr2acc_;
+    u.q = imu.q * odom.q.inverse() * des_q;
+    // std::cout << "observed disturbance:" << std::endl
+            //   << "x: " << out[0] << std::endl << "y: " << out[1] << std::endl << "z: " << out[2] << std::endl << std::endl;
+    // 填充调试信息
+    debug_msg_.des_v_x = out[0];
+    debug_msg_.des_v_y = out[1];
+    debug_msg_.des_v_z = out[2];
+
+    // debug_msg_.des_v_x = des.v(0);
+    // debug_msg_.des_v_y = des.v(1);
+    // debug_msg_.des_v_z = des.v(2);
+
+    // debug_msg_.des_a_x = des_acc(0);
+    // debug_msg_.des_a_y = des_acc(1);
+    // debug_msg_.des_a_z = des_acc(2);
+
+    debug_msg_.des_q_x = des_q.x();
+    debug_msg_.des_q_y = des_q.y();
+    debug_msg_.des_q_z = des_q.z();
+    debug_msg_.des_q_w = des_q.w();
+
+    debug_msg_.des_thr = u.thrust;
+
+    return debug_msg_;
+}

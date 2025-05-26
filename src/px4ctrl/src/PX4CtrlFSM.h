@@ -14,7 +14,6 @@
 // #include "ThrustCurve.h"
 // #include "controller.h"
 #include "MPCController.h"
-#include "NonlinearESO.hpp"
 
 struct AutoTakeoffLand_t
 {

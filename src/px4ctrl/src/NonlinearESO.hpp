@@ -40,13 +40,13 @@ public:
           velocity_hat_{0, 0, 0},
           disturbance_hat_{0, 0, 0}
     {
-        const double omega = 20; // 观测器带宽(rad/s)
-        config_.alpha1 = 3 * omega;
-        config_.alpha2 = 3 * std::pow(omega, 2);
-        config_.alpha3 = std::pow(omega, 3);
-        config_.beta1 = 0.3;
-        config_.beta2 = 0.3;
-        config_.beta3 = 0.3;
+        const double omega = 10; // 观测器带宽(rad/s)
+        config_.beta1 = 3 * omega;
+        config_.beta2 = 3 * std::pow(omega, 2);
+        config_.beta3 = std::pow(omega, 3);
+        config_.alpha1 = 0.3;
+        config_.alpha2 = 0.3;
+        config_.alpha3 = 0.3;
         config_.delta = 0.1;
         config_.mass = 1.62;
         config_.dt = 0.01;
@@ -123,6 +123,63 @@ public:
             disturbance_hat_[axis] += config_.dt * (config_.beta3 * e3);
         }
     }
+
+    /**
+     * @brief ESO更新函数（输入为推力和欧拉角）
+     * @param position_meas 测量位置 [x, y, z] (m)
+     * @param thrust 总推力 (N)
+     * @param euler 欧拉角 [roll, pitch, yaw] (rad)
+     */
+    void update(const Eigen::Vector3d position_meas,
+                const double thrust,
+                const Eigen::Vector3d euler)
+    {
+        // 1. 计算推力在世界坐标系的分量
+        const double roll = euler(0);  // Roll
+        const double pitch = euler(1); // Pitch
+        const double yaw = euler(2);   // Yaw
+
+        // 计算三角函数值
+        const double cr = cos(roll);  // 横滚角余弦
+        const double sr = sin(roll);  // 横滚角正弦
+        const double cp = cos(pitch); // 俯仰角余弦
+        const double sp = sin(pitch); // 俯仰角正弦
+        const double cy = cos(yaw);   // 偏航角余弦
+        const double sy = sin(yaw);   // 偏航角正弦
+
+        // 构建ZYX顺序的旋转矩阵
+        Eigen::Matrix3d R;
+        R << cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr,
+            sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr,
+            -sp, cp * sr, cp * cr;
+
+        const Eigen::Vector3d thrust_body(0.0, 0.0, thrust); // 机体坐标系推力
+        const Eigen::Vector3d thrust_world = R * thrust_body;
+
+        // 重力向量
+        const Eigen::Vector3d gravity_force(0.0, 0.0, -config_.mass * config_.gravity);
+
+        // 总控制输入力 = 推力 + 补偿重力
+        const Eigen::Vector3d u_total = thrust_world + gravity_force;
+
+        // 2. 对各轴独立更新ESO
+        for (int axis = 0; axis < 3; ++axis)
+        {
+            const double e = position_meas(axis) - position_hat_[axis];
+
+            // 非线性误差处理
+            const double e1 = fal(e, config_.alpha1, config_.delta);
+            const double e2 = fal(e, config_.alpha2, config_.delta);
+            const double e3 = fal(e, config_.alpha3, config_.delta);
+
+            // 状态更新 (欧拉离散化)
+            position_hat_[axis] += config_.dt * (velocity_hat_[axis] + config_.beta1 * e1);
+
+            velocity_hat_[axis] += config_.dt * ((u_total[axis] + disturbance_hat_[axis]) / config_.mass + config_.beta2 * e2);
+
+            disturbance_hat_[axis] += config_.dt * (config_.beta3 * e3);
+        }
+    }
     // 获取估计状态
     void getPositionEstimate(double out[3]) const
     {
@@ -156,6 +213,7 @@ private:
             config_.alpha2 <= 0 || config_.alpha2 >= 1 ||
             config_.alpha3 <= 0 || config_.alpha3 >= 1)
         {
+    
             throw std::invalid_argument("alpha must in (0,1)");
         }
     }
