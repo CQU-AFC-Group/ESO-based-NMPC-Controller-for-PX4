@@ -5,21 +5,36 @@ MPCController::MPCController() : solver_initialized_(false)
 {
 
     // 初始化参数
-    param_.horizon = 15;
-    param_.dt = 0.01;
+    param_.horizon = 10;
+    param_.dt = 0.025;
     // 设置权重矩阵
+
+    // 1.backup
     // 水平通道
-    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 35;      
-    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 2.5;     
-    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 10;
+    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 1000;
+    param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 2000;
+    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 100;
+    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 100;
     // 垂直通道
-    param_.Q_p(2, 2) = 650;
-    param_.Q_v(2, 2) = 6;
-    param_.R(0, 0) = 0.01;
+    param_.Q_p(2, 2) = 400;
+    param_.Q_p_e(2, 2) = 800;
+    param_.Q_v(2, 2) = 30;
+    param_.R(0, 0) = 0.1;
+
+    // 2.new
+    // // 水平通道
+    // param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 200;
+    // param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 400;
+    // param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 10;     
+    // param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 1;
+    // // 垂直通道
+    // param_.Q_p(2, 2) = 80;
+    // param_.Q_p_e(2, 2) = 100;
+    // param_.Q_v(2, 2) = 20;
+    // param_.R(0, 0) = 0.1;
 
     param_.mass = 1.62;
     param_.gravity = 9.81;
-    // param_.thrust_limit = 30.0;
     // 初始化求解器
     // initializeSolver();
     initializeCompleteSolver();
@@ -287,8 +302,9 @@ void MPCController::initializeCompleteSolver()
     casadi::SX U = casadi::SX::sym("U", 4, param_.horizon); // 控制序列
     casadi::SX X0 = casadi::SX::sym("X0", 6);               // 初始状态（参数）
     casadi::SX X_ref = casadi::SX::sym("X_ref", 6);         // 参考状态（参数）
-    casadi::SX thr2acc = casadi::SX::sym("thr2acc", 1);
-    casadi::SX observed_disturbance = casadi::SX::sym("observed_disturbance", 3);
+    casadi::SX thr2acc = casadi::SX::sym("thr2acc", 1);     // 油门转化比值（参数）
+    casadi::SX observed_disturbance = casadi::SX::sym("observed_disturbance", 3); // 观测的扰动（参数）
+    casadi::SX u0 = casadi::SX::sym("u_0", 3);                       // 初始输入（参数）
     // 目标函数
     casadi::SX obj = 0;
 
@@ -301,8 +317,12 @@ void MPCController::initializeCompleteSolver()
     // 转换 Eigen 权重矩阵为 CasADi 格式
     casadi::SX Q_p_casadi = eigenToCasadi(param_.Q_p);
     casadi::SX Q_v_casadi = eigenToCasadi(param_.Q_v);
+    casadi::SX Q_p_e_casadi = eigenToCasadi(param_.Q_p);
     casadi::SX R_casadi = eigenToCasadi(param_.R);
     casadi::SX u_k_last = casadi::SX::zeros(4);
+    u_k_last(0) = u0(0);
+    u_k_last(1) = u0(1);
+    u_k_last(2) = u0(2);
     // 构建目标函数和约束
     for (int k = 0; k < param_.horizon; ++k)
     {
@@ -328,23 +348,35 @@ void MPCController::initializeCompleteSolver()
         g.push_back(u_k(1));                         // roll
         g.push_back(u_k(2));                         // pitch
         g.push_back(u_k(3));                         // yaw
-        // g.push_back(u_k(2) * u_k(2) + u_k(3) * u_k(3) + u_k(4) * u_k(4) - 1);
+
+        // g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0))); // dot_thrust
+        // g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1))); // dot_phi
+        // g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2))); // dot_theta
         if (k > 0)
         {
             g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0))); // dot_thrust
             g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1))); // dot_phi
             g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2))); // dot_theta
         }
+        // else
+        // {
+        //     g.push_back(casadi::SX::abs(u0(0) - u_k(0)));
+        //     g.push_back(casadi::SX::abs(u0(1) - u_k(1)));
+        //     g.push_back(casadi::SX::abs(u0(2) - u_k(2)));
+        // }
 
         u_k_last = u_k;
         // 更新当前状态
         x_current = x_next;
     }
+    // 位置和速度误差
+    casadi::SX e_p = x_current(casadi::Slice(0, 3)) - X_ref(casadi::Slice(0, 3));
+    obj += casadi::SX::mtimes(e_p.T(), casadi::SX::mtimes(Q_p_e_casadi, e_p));
 
     // 定义优化问题
     casadi::SXDict nlp = {
         {"x", casadi::SX::reshape(U, 4 * param_.horizon, 1)}, // 决策变量仅包含 U
-        {"p", casadi::SX::vertcat({X0, X_ref, thr2acc, observed_disturbance})},     // 参数
+        {"p", casadi::SX::vertcat({X0, X_ref, thr2acc, observed_disturbance, u0})},     // 参数
         {"f", obj},
         {"g", casadi::SX::vertcat(g)}};
 
@@ -640,6 +672,7 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
                                                              NonlinearESO &observer)
 {
     static std::vector<double> disturbance = {0, 0, 0};
+    static std::vector<double> u_last = {0, 0, 0};
     // 更新当前状态
     state_.segment(0, 3) = odom.p.cast<double>(); // 位置
     state_.segment(3, 3) = odom.v.cast<double>(); // 速度
@@ -648,12 +681,19 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     Eigen::Matrix<double, 6, 1> ref_state;
     ref_state.segment(0, 3) = des.p; // 期望位置
     ref_state.segment(3, 3) = des.v; // 期望速度
+    // 输入油门比值
     casadi::DM thr2acc_dm = casadi::DM::zeros(1, 1);
     thr2acc_dm(0, 0) = thr2acc_;
+    // 输入观测扰动
     casadi::DM observed_disturbance = casadi::DM::zeros(3, 1);
     observed_disturbance(0, 0) = disturbance[0];
     observed_disturbance(1, 0) = disturbance[1];
     observed_disturbance(2, 0) = disturbance[2];
+    // 上一时刻输入
+    casadi::DM u_0 = casadi::DM::zeros(3, 1);
+    u_0(0, 0) = u_last[0];
+    u_0(1, 0) = u_last[1];
+    u_0(2, 0) = u_last[2];
     // 设置求解器输入
     casadi::DM p = casadi::DM::vertcat({casadi::DM::reshape(
                                             casadi::DM(std::vector<double>(state_.data(), state_.data() + state_.size())),
@@ -662,7 +702,8 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
                                             casadi::DM(std::vector<double>(ref_state.data(), ref_state.data() + ref_state.size())),
                                             ref_state.size(), 1),
                                         thr2acc_dm,
-                                        observed_disturbance});
+                                        observed_disturbance,
+                                        u_0});
 
     // 求解优化问题
     casadi::DMDict arg = {{"p", p}};
@@ -680,34 +721,28 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         lbg.push_back(0.2);
         ubg.push_back(0.8);
 
-        // // 四元数约束
-        // lbg.push_back(0);
-        // ubg.push_back(0);
-
         // 欧拉角约束
-        lbg.push_back(-10); // roll
-        ubg.push_back(10);
-        lbg.push_back(-10); // pitch
-        ubg.push_back(10);
+        lbg.push_back(-30); // roll
+        ubg.push_back(30);
+        lbg.push_back(-30); // pitch
+        ubg.push_back(30);
         lbg.push_back(0); // yaw
         ubg.push_back(0);
 
         if (i > 0)
         {
             lbg.push_back(0); // dot_thrust
-            ubg.push_back(0.025);
+            ubg.push_back(1 * param_.dt);
             lbg.push_back(0); // dot_pitch
-            ubg.push_back(0.01);
+            ubg.push_back(0.3 * param_.dt);
             lbg.push_back(0); // dot_theta
-            ubg.push_back(0.01);
+            ubg.push_back(0.3 * param_.dt);
         }
     }
 
     arg["lbg"] = lbg;
     arg["ubg"] = ubg;
-    // 调试输出
-    // std::cout << "实际参数维度: " << p.size1() << "x" << p.size2()
-    //           << " (期望值:13x1)" << std::endl;
+
     // 求解
     casadi::DMDict res = solver_(arg);
     casadi::DM U_opt = casadi::DM::reshape(res.at("x"), 4, param_.horizon);
@@ -718,7 +753,6 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     {
         u_opt(i) = static_cast<double>(U_opt(i, 0)); // 类型转换
     }
-    // Eigen::Quaterniond des_q(u_opt(1), u_opt(2), u_opt(3), u_opt(4));
     Eigen::Quaterniond des_q = Eigen::AngleAxisd(u_opt(3), Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(u_opt(2), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(u_opt(1), Eigen::Vector3d::UnitX());
     
     // 更新观测器
@@ -727,8 +761,10 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     // 更新控制器输出
     u.thrust = u_opt(0) / param_.mass / thr2acc_;
     u.q = imu.q * odom.q.inverse() * des_q;
-    // std::cout << "observed disturbance:" << std::endl
-            //   << "x: " << out[0] << std::endl << "y: " << out[1] << std::endl << "z: " << out[2] << std::endl << std::endl;
+    u_last[0] = u_opt(0);
+    u_last[1] = u_opt(1);
+    u_last[2] = u_opt(2);
+
     // 填充调试信息
     debug_msg_.des_v_x = disturbance[0];
     debug_msg_.des_v_y = disturbance[1];

@@ -61,8 +61,10 @@ private:
 
         // 权重矩阵
         Eigen::Matrix<double, 3, 3> Q_p; // 位置误差权重
+        Eigen::Matrix<double, 3, 3> Q_p_e; // 终端误差权重
         Eigen::Matrix<double, 3, 3> Q_v; // 速度误差权重
         Eigen::Matrix<double, 4, 4> R;   // 控制输入权重
+
 
         // 四旋翼物理参数
         double mass;         // 质量 [kg]
