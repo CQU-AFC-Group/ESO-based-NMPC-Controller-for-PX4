@@ -6,15 +6,15 @@ MPCController::MPCController() : solver_initialized_(false)
 
     // 初始化参数
     param_.horizon = 10;
-    param_.dt = 0.025;
+    param_.dt = 0.01;
     // 设置权重矩阵
 
     // 1.backup
     // 水平通道
-    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 1000;
-    param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 2000;
-    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 100;
-    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 100;
+    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 1600;
+    param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 3200;
+    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 60;
+    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 50;
     // 垂直通道
     param_.Q_p(2, 2) = 400;
     param_.Q_p_e(2, 2) = 800;
@@ -732,11 +732,11 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         if (i > 0)
         {
             lbg.push_back(0); // dot_thrust
-            ubg.push_back(1 * param_.dt);
+            ubg.push_back(1.5 * param_.dt);
             lbg.push_back(0); // dot_pitch
-            ubg.push_back(0.3 * param_.dt);
+            ubg.push_back(0.4 * param_.dt);
             lbg.push_back(0); // dot_theta
-            ubg.push_back(0.3 * param_.dt);
+            ubg.push_back(0.4 * param_.dt);
         }
     }
 

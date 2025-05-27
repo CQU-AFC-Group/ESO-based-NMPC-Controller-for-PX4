@@ -49,16 +49,16 @@ public:
     NonlinearESO()
     {
         // 水平通道参数
-        const double omega_xy = 1.5; // 水平观测带宽
+        const double omega_xy = 4; // 水平观测带宽
         config_.beta1_xy = 3 * omega_xy;
         config_.beta2_xy = 3 * std::pow(omega_xy, 2);
         config_.beta3_xy = std::pow(omega_xy, 3);
-        config_.alpha1_xy = 0.8;
-        config_.alpha2_xy = 0.8;
-        config_.alpha3_xy = 0.8;
+        config_.alpha1_xy = 0.6;
+        config_.alpha2_xy = 0.6;
+        config_.alpha3_xy = 0.6;
 
         // 高度通道参数
-        const double omega_z = 2; // 高度观测带宽
+        const double omega_z = 5; // 高度观测带宽
         config_.beta1_z = 3 * omega_z;
         config_.beta2_z = 3 * std::pow(omega_z, 2);
         config_.beta3_z = std::pow(omega_z, 3);
@@ -69,7 +69,7 @@ public:
         // 公共参数
         config_.delta = 0.1;
         config_.mass = 1.62;
-        config_.dt = 0.025;
+        config_.dt = 0.01;
         config_.gravity = 9.81;
 
         validateParameters();
