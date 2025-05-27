@@ -40,7 +40,7 @@ public:
           velocity_hat_{0, 0, 0},
           disturbance_hat_{0, 0, 0}
     {
-        const double omega = 10; // 观测器带宽(rad/s)
+        const double omega = 2.5; // 观测器带宽(rad/s)
         config_.beta1 = 3 * omega;
         config_.beta2 = 3 * std::pow(omega, 2);
         config_.beta3 = std::pow(omega, 3);

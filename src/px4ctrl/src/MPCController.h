@@ -107,8 +107,11 @@ public:
     template <typename Derived>
     casadi::SX eigenToCasadi(const Eigen::MatrixBase<Derived> &mat);
     
-    // 初始化线性MPC求解器
+    // 初始化非线性MPC求解器
     void initializeSolver();
+
+    // 初始化扰动模型下的MPC求解器
+    void initializeCompleteSolver();
 
     // 四旋翼位移四元数模型
     casadi::SX nonlinearQuadrotorTranslationQuaternionModel(const casadi::SX &x, const casadi::SX &u);
@@ -118,7 +121,10 @@ public:
         const casadi::SX &psi);
 
     // 四旋翼位移欧拉角模型
-    casadi::SX nonlinearQuadrotorEulerModel(const casadi::SX &x, const casadi::SX &u);
+    casadi::SX nonlinearQuadrotorTranslationEulerModel(const casadi::SX &x, const casadi::SX &u);
+
+    // 四旋翼位移欧拉角扰动模型
+    casadi::SX nonlinearQuadrotorTranslationEulerDisturbanceModel(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d);
 
     // 四元数乘法
     casadi::SX quaternionMultiply(const casadi::SX &q1, const casadi::SX &q2);

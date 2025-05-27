@@ -24,8 +24,8 @@ class TrajectoryPublisher:
 
         # 初始化消息
         self.cmd_msg = PositionCommand()
-        self.cmd_msg.kx = [5.0, 5.0, 5.0]  # 位置增益
-        self.cmd_msg.kv = [0.4, 0.4, 0.4]  # 速度增益
+        self.cmd_msg.kx = [0.0, 0.0, 0.0]  # 位置增益
+        self.cmd_msg.kv = [0, 0, 0]  # 速度增益
         self.cmd_msg.trajectory_id = 1
         self.cmd_msg.trajectory_flag = 1
 
@@ -43,7 +43,8 @@ class TrajectoryPublisher:
                                   "2 - 直线轨迹\n"
                                   "3 - 定点 (0,0,3)\n"
                                   "4 - 定点 (1,1,3)\n"
-                                  "输入选项 (1-4): ")
+                                  "5 - 定点 (0,0,4)"
+                                  "输入选项 (1-5): ")
                 
                 with self.lock:
                     if user_input == '1':
@@ -58,8 +59,11 @@ class TrajectoryPublisher:
                     elif user_input == '4':
                         self.trajectory_type = "hover_corner"
                         print("切换到角落悬停")
+                    elif user_input == '5':
+                        self.trajectory_type = "hover_upper"
+                        print("切换到更高原点悬停")
                     else:
-                        print("无效输入，请重新输入1-4")
+                        print("无效输入，请重新输入1-5")
                         continue  # 跳过时间重置
                     
                     # 重置轨迹开始时间
@@ -124,6 +128,14 @@ class TrajectoryPublisher:
             self.cmd_msg.position.x = 1.0
             self.cmd_msg.position.y = 1.0
             self.cmd_msg.position.z = 3
+            self.cmd_msg.velocity = Vector3(0,0,0)
+            self.cmd_msg.yaw = 0.0
+            return True
+        elif traj_type == "hover_upper":
+            # 角落悬停 (0,0,4)
+            self.cmd_msg.position.x = 0.0
+            self.cmd_msg.position.y = 0.0
+            self.cmd_msg.position.z = 4
             self.cmd_msg.velocity = Vector3(0,0,0)
             self.cmd_msg.yaw = 0.0
             return True
