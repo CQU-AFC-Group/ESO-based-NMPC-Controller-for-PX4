@@ -14,7 +14,7 @@ MPCController::MPCController() : solver_initialized_(false)
     param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 1600;
     param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 3200;
     param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 60;
-    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 50;
+    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 100;
     // 垂直通道
     param_.Q_p(2, 2) = 400;
     param_.Q_p_e(2, 2) = 800;
