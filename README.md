@@ -82,7 +82,7 @@ Provides fake RC input for Gazebo simulation environment.
 * Set RC channel 6 = 2000 (bottom position)
 3. After "ready for re-takeoff" prompt:
 ```bash
-rosrun sim_rc sim_rc_node
+./takeoff.sh
 ```
 Quadrotor will execute autonomous takeoff sequence.
 
