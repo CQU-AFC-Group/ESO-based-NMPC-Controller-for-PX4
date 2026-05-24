@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<launch>
+    <arg name="use_cli" default="false" />
+    <arg name="use_traj" default="false" />
+    <!-- 启动无人机加速度环控制器节点（将参数加载到该节点的私有命名空间） -->
+    <node pkg="cxr_egoctrl_v1" type="cxr_egoctrl_v1" name="cxr_egoctrl_v1" output="screen">
+        <param name="use_sim_time" value="true" />
+        <rosparam file="$(find cxr_egoctrl_v1)/config/config.yaml" command="load" />
+        <remap from="position_cmd" to="planning/pos_cmd"/>
+    </node>
+    
+    <group if="$(arg use_traj)">
+        <node pkg="cxr_egoctrl_v1" type="trajectory_node" name="trajectory_node" output="screen">
+            <param name="use_sim_time" value="true" />
+            <rosparam file="$(find cxr_egoctrl_v1)/config/config.yaml" command="load" />
+        </node>
+    </group>
+
+    <group if="$(arg use_cli)">
+        <node pkg="cxr_egoctrl_v1" type="trajectory_cli" name="trajectory_cli" output="screen" launch-prefix="gnome-terminal --">
+            <param name="use_sim_time" value="true" />
+            <rosparam file="$(find cxr_egoctrl_v1)/config/config.yaml" command="load" />
+        </node>
+    </group>
+    <node pkg="cxr_egoctrl_v1" type="trajectory_viz" name="trajectory_viz" output="screen">
+        <param name="use_sim_time" value="true" />
+    </node>
+    
+    <!-- 如果需要可视化轨迹，可以取消下面的注释 -->
+    <!-- 
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find cxr_egoctrl_v1)/config/simulation.rviz" />
+    -->
+    
+</launch>

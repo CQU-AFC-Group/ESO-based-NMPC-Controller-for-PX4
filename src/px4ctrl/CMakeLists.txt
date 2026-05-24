@@ -15,11 +15,16 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   uav_utils
   mavros 
+  dynamic_reconfigure
 )
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 find_package(Eigen3 REQUIRED) 
 find_package(casadi REQUIRED) 
+
+generate_dynamic_reconfigure_options(
+  cfg/MPCController.cfg
+)
 
 catkin_package(
 )
@@ -40,7 +45,7 @@ add_executable(px4ctrl_node
   src/input.cpp
 )
 
-add_dependencies(px4ctrl_node quadrotor_msgs)
+add_dependencies(px4ctrl_node ${catkin_EXPORTED_TARGETS} ${PROJECT_NAME}_gencfg)
 
 target_link_libraries(px4ctrl_node
   ${catkin_LIBRARIES}

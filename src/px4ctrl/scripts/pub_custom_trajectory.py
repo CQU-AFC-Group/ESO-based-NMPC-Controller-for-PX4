@@ -85,7 +85,7 @@ class TrajectoryPublisher:
         elif traj_type == "circle":
             # 修正圆形轨迹公式 (半径2米，周期8秒)
             radius = 2.0
-            omega = 2 / radius
+            omega = 1 / radius
             
             self.cmd_msg.position.x = radius * math.cos(omega * t)
             self.cmd_msg.position.y = radius * math.sin(omega * t)
@@ -94,6 +94,10 @@ class TrajectoryPublisher:
             self.cmd_msg.velocity.x = -radius * omega * math.sin(omega * t)
             self.cmd_msg.velocity.y = radius * omega * math.cos(omega * t)
             self.cmd_msg.velocity.z = 0.0
+
+            self.cmd_msg.acceleration.x = -radius * omega * omega * math.cos(omega * t)
+            self.cmd_msg.acceleration.y = -radius * omega * omega * math.sin(omega * t)
+            self.cmd_msg.acceleration.z = 0.0
             
             self.cmd_msg.yaw = 0
             return True
@@ -110,6 +114,10 @@ class TrajectoryPublisher:
             self.cmd_msg.velocity.x = amplitude * (2 * math.pi / period) * math.cos(2 * math.pi / period * t)
             self.cmd_msg.velocity.y = 0.0
             self.cmd_msg.velocity.z = 0.0
+
+            self.cmd_msg.acceleration.x = -amplitude * (2 * math.pi / period) * (2 * math.pi / period) * math.sin(2 * math.pi / period * t)
+            self.cmd_msg.acceleration.y = 0.0
+            self.cmd_msg.acceleration.z = 0.0
             
             self.cmd_msg.yaw = 0.0
             return True

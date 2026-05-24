@@ -2,7 +2,7 @@
 # ⭐⭐⭐  Set parameters carefully for satisfied performance!   ⭐⭐⭐ #
 #########################################################################
 
-mass        : 1.2 # kg 
+mass        : 1.5 # kg 
 gra         : 9.81 
 pose_solver : 0     # 0:From ZhepeiWang (drag & less singular) 1:From ZhepeiWang, 2:From rotor-drag    
 ctrl_freq_max   : 100.0
@@ -10,6 +10,25 @@ use_bodyrate_ctrl: false
 max_manual_vel: 1.0
 max_angle: 30  # Attitude angle limit in degree. A negative value means no limit.
 low_voltage: 13.2 # 4S battery
+
+mpc:
+    horizon: 20
+    dt: 0.02
+    use_observer: false
+    q_p_xy: 2100.0
+    q_p_z: 3100.0
+    q_p_e_xy: 3200.0
+    q_p_e_z: 3200.0
+    q_v_xy: 700.0
+    q_v_z: 400.0
+    r_thrust: 10.0
+    r_roll_pitch: 1600.0
+    r_yaw: 40.0
+    thrust_min: 0.2
+    thrust_max: 0.9
+    roll_pitch_limit: 0.5
+    thrust_rate: 10.0
+    attitude_rate: 10.0
 
 rc_reverse: # *
     roll: false
@@ -20,19 +39,19 @@ rc_reverse: # *
 auto_takeoff_land:
     enable: true
     enable_auto_arm: true
-    no_RC: false
+    no_RC: true
     takeoff_height: 3.0 # m
-    takeoff_land_speed: 0.3 # m/s
+    takeoff_land_speed: 0.5 # m/s
 
 thrust_model: # The model that maps thrust signal u(0~1) to real thrust force F(Unit:N): F=K1*Voltage^K2*(K3*u^2+(1-K3)*u). 
-    print_value: false # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating.
+    print_value: true # display the value of “thr_scale_compensate” or “hover_percentage” during thrust model estimating.
     accurate_thrust_model: false  # This can always enabled if don't require accurate control performance :-)
     # accurate thrust mapping parameters
     K1: 0.7583 # Needs precise calibration!
     K2: 1.6942 # Needs precise calibration!
     K3: 0.6786 # Needs precise calibration! K3 equals THR_MDL_FAC in https://docs.px4.io/master/en/config_mc/pid_tuning_guide_multicopter.html.
     # approximate thrust mapping parameters
-    hover_percentage: 0.5  # Thrust percentage in Stabilize/Arco mode # *
+    hover_percentage: 0.707  # Thrust percentage in Stabilize/Arco mode # *
 
 gain: 
     # Cascade PID controller. Recommend to read the code.

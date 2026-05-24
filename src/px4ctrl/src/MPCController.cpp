@@ -1,42 +1,110 @@
 #include "MPCController.h"
 
+#include <algorithm>
+#include <cmath>
+
 // 构造函数
-MPCController::MPCController() : solver_initialized_(false)
+MPCController::MPCController() : solver_initialized_(false), has_last_control_(false)
 {
 
     // 初始化参数
-    param_.horizon = 10;
-    param_.dt = 0.01;
-    // 设置权重矩阵
-
-    // 1.backup
-    // 水平通道
-    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 1600;
-    param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 3200;
-    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 60;
-    param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 100;
-    // 垂直通道
-    param_.Q_p(2, 2) = 400;
-    param_.Q_p_e(2, 2) = 800;
-    param_.Q_v(2, 2) = 30;
-    param_.R(0, 0) = 0.1;
-
-    // 2.new
-    // // 水平通道
-    // param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * 200;
-    // param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * 400;
-    // param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * 10;     
-    // param_.R = Eigen::Matrix<double, 4, 4>::Identity() * 1;
-    // // 垂直通道
-    // param_.Q_p(2, 2) = 80;
-    // param_.Q_p_e(2, 2) = 100;
-    // param_.Q_v(2, 2) = 20;
-    // param_.R(0, 0) = 0.1;
-
-    param_.mass = 1.62;
-    param_.gravity = 9.81;
+    ros::NodeHandle nh("~");
+    loadMPCParams(nh);
+    applyMPCParamsToMatrices();
+    resetThrustMapping();
     // 初始化求解器
     // initializeSolver();
+    initializeCompleteSolver();
+
+    syncDynamicReconfigureParams(nh);
+    reconfigure_server_.reset(new dynamic_reconfigure::Server<px4ctrl::MPCControllerConfig>(nh));
+    dynamic_reconfigure::Server<px4ctrl::MPCControllerConfig>::CallbackType cb =
+        boost::bind(&MPCController::reconfigureCallback, this, _1, _2);
+    reconfigure_server_->setCallback(cb);
+}
+
+void MPCController::loadMPCParams(const ros::NodeHandle &nh)
+{
+    nh.param("mass", param_.mass, 1.62);
+    nh.param("gra", param_.gravity, 9.81);
+    nh.param("thrust_model/hover_percentage", param_.hover_percentage, 0.5);
+    param_.hover_percentage = std::min(std::max(param_.hover_percentage, 0.1), 0.9);
+    nh.param("thrust_model/print_value", param_.print_thrust_mapping, false);
+    nh.param("mpc/horizon", param_.horizon, 20);
+    nh.param("mpc/dt", param_.dt, 0.02);
+    nh.param("mpc/use_observer", param_.use_observer, true);
+    nh.param("mpc/q_p_xy", param_.q_p_xy, 800.0);
+    nh.param("mpc/q_p_z", param_.q_p_z, 200.0);
+    nh.param("mpc/q_p_e_xy", param_.q_p_e_xy, 1600.0);
+    nh.param("mpc/q_p_e_z", param_.q_p_e_z, 400.0);
+    nh.param("mpc/q_v_xy", param_.q_v_xy, 320.0);
+    nh.param("mpc/q_v_z", param_.q_v_z, 120.0);
+    nh.param("mpc/r_thrust", param_.r_thrust, 0.3);
+    nh.param("mpc/r_roll_pitch", param_.r_roll_pitch, 240.0);
+    nh.param("mpc/r_yaw", param_.r_yaw, 40.0);
+    nh.param("mpc/thrust_min", param_.thrust_min, 0.2);
+    nh.param("mpc/thrust_max", param_.thrust_max, 0.8);
+    nh.param("mpc/roll_pitch_limit", param_.roll_pitch_limit, 0.25);
+    nh.param("mpc/thrust_rate", param_.thrust_rate, 1.5);
+    nh.param("mpc/attitude_rate", param_.attitude_rate, 0.8);
+}
+
+void MPCController::applyMPCParamsToMatrices()
+{
+    param_.Q_p = Eigen::Matrix<double, 3, 3>::Identity() * param_.q_p_xy;
+    param_.Q_p(2, 2) = param_.q_p_z;
+    param_.Q_p_e = Eigen::Matrix<double, 3, 3>::Identity() * param_.q_p_e_xy;
+    param_.Q_p_e(2, 2) = param_.q_p_e_z;
+    param_.Q_v = Eigen::Matrix<double, 3, 3>::Identity() * param_.q_v_xy;
+    param_.Q_v(2, 2) = param_.q_v_z;
+    param_.R = Eigen::Matrix<double, 4, 4>::Identity();
+    param_.R(0, 0) = param_.r_thrust;
+    param_.R(1, 1) = param_.r_roll_pitch;
+    param_.R(2, 2) = param_.r_roll_pitch;
+    param_.R(3, 3) = param_.r_yaw;
+}
+
+void MPCController::syncDynamicReconfigureParams(const ros::NodeHandle &nh)
+{
+    nh.setParam("horizon", param_.horizon);
+    nh.setParam("dt", param_.dt);
+    nh.setParam("use_observer", param_.use_observer);
+    nh.setParam("q_p_xy", param_.q_p_xy);
+    nh.setParam("q_p_z", param_.q_p_z);
+    nh.setParam("q_p_e_xy", param_.q_p_e_xy);
+    nh.setParam("q_p_e_z", param_.q_p_e_z);
+    nh.setParam("q_v_xy", param_.q_v_xy);
+    nh.setParam("q_v_z", param_.q_v_z);
+    nh.setParam("r_thrust", param_.r_thrust);
+    nh.setParam("r_roll_pitch", param_.r_roll_pitch);
+    nh.setParam("r_yaw", param_.r_yaw);
+    nh.setParam("thrust_min", param_.thrust_min);
+    nh.setParam("thrust_max", param_.thrust_max);
+    nh.setParam("roll_pitch_limit", param_.roll_pitch_limit);
+    nh.setParam("thrust_rate", param_.thrust_rate);
+    nh.setParam("attitude_rate", param_.attitude_rate);
+}
+
+void MPCController::reconfigureCallback(px4ctrl::MPCControllerConfig &config, uint32_t)
+{
+    param_.horizon = config.horizon;
+    param_.dt = config.dt;
+    param_.use_observer = config.use_observer;
+    param_.q_p_xy = config.q_p_xy;
+    param_.q_p_z = config.q_p_z;
+    param_.q_p_e_xy = config.q_p_e_xy;
+    param_.q_p_e_z = config.q_p_e_z;
+    param_.q_v_xy = config.q_v_xy;
+    param_.q_v_z = config.q_v_z;
+    param_.r_thrust = config.r_thrust;
+    param_.r_roll_pitch = config.r_roll_pitch;
+    param_.r_yaw = config.r_yaw;
+    param_.thrust_min = config.thrust_min;
+    param_.thrust_max = config.thrust_max;
+    param_.roll_pitch_limit = config.roll_pitch_limit;
+    param_.thrust_rate = config.thrust_rate;
+    param_.attitude_rate = config.attitude_rate;
+    applyMPCParamsToMatrices();
     initializeCompleteSolver();
 }
 
@@ -88,9 +156,14 @@ bool MPCController::estimateThrustModel(const Eigen::Vector3d &est_a,const Param
         double gamma = 1 / (rho2_ + thr * P_ * thr);
         double K = gamma * P_ * thr;
         thr2acc_ = thr2acc_ + K * (est_a(2) - thr * thr2acc_);
+        thr2acc_ = std::min(std::max(thr2acc_, param_.gravity / 0.9), param_.gravity / 0.2);
         P_ = (1 - K * thr) * P_ / rho2_;
-        // printf("%6.3f,%6.3f,%6.3f,%6.3f\n", thr2acc_, gamma, K, P_);
-        // fflush(stdout);
+        if (param_.print_thrust_mapping)
+        {
+            ROS_INFO_THROTTLE(0.5,
+                              "[px4ctrl][mpc thrust mapping] thr2acc=%.4f, hover=%.4f, thrust_sample=%.4f, acc_z=%.4f, gamma=%.4f, K=%.4f, P=%.2f",
+                              thr2acc_, param_.gravity / thr2acc_, thr, est_a(2), gamma, K, P_);
+        }
 
         // debug_msg_.thr2acc = thr2acc_;
         return true;
@@ -100,8 +173,15 @@ bool MPCController::estimateThrustModel(const Eigen::Vector3d &est_a,const Param
 
 void MPCController::resetThrustMapping(void)
 {
-    thr2acc_ = param_.gravity / 0.5;
+    thr2acc_ = param_.gravity / param_.hover_percentage;
     P_ = 1e6;
+    param_.u_last = {param_.mass * param_.gravity, 0.0, 0.0, 0.0};
+    has_last_control_ = false;
+    if (param_.print_thrust_mapping)
+    {
+        ROS_INFO("[px4ctrl][mpc thrust mapping] reset: hover=%.4f, thr2acc=%.4f",
+                 param_.hover_percentage, thr2acc_);
+    }
 }
 
 template <typename Derived>
@@ -211,7 +291,7 @@ void MPCController::initializeSolver()
     // 定义优化问题变量
     casadi::SX U = casadi::SX::sym("U", 4, param_.horizon); // 控制序列
     casadi::SX X0 = casadi::SX::sym("X0", 6);               // 初始状态（参数）
-    casadi::SX X_ref = casadi::SX::sym("X_ref", 6);         // 参考状态（参数）
+    casadi::SX X_ref = casadi::SX::sym("X_ref", 6, param_.horizon);         // 参考状态（参数）
     casadi::SX thr2acc = casadi::SX::sym("thr2acc", 1);
     // 目标函数
     casadi::SX obj = 0;
@@ -237,9 +317,10 @@ void MPCController::initializeSolver()
         casadi::SXDict args = {{"x", x_current}, {"u", u_k}};
         casadi::SX x_next = f(args).at("x_next");
 
+        casadi::SX x_ref_k = X_ref(casadi::Slice(), k); // 参考状态
         // 位置和速度误差
-        casadi::SX e_p = x_current(casadi::Slice(0, 3)) - X_ref(casadi::Slice(0, 3));
-        casadi::SX e_v = x_current(casadi::Slice(3, 6)) - X_ref(casadi::Slice(3, 6));
+        casadi::SX e_p = x_current(casadi::Slice(0, 3)) - x_ref_k(casadi::Slice(0, 3));
+        casadi::SX e_v = x_current(casadi::Slice(3, 6)) - x_ref_k(casadi::Slice(3, 6));
 
         // 目标函数
         obj += casadi::SX::mtimes(e_p.T(), casadi::SX::mtimes(Q_p_casadi, e_p));
@@ -254,9 +335,9 @@ void MPCController::initializeSolver()
         g.push_back(u_k(3)); // yaw
         // g.push_back(u_k(2) * u_k(2) + u_k(3) * u_k(3) + u_k(4) * u_k(4) - 1);
         if (k > 0){
-            g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0)));  // dot_thrust
-            g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1)));  // dot_phi
-            g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2)));  // dot_theta
+            g.push_back(u_k(0) - u_k_last(0));  // dot_thrust
+            g.push_back(u_k(1) - u_k_last(1));  // dot_phi
+            g.push_back(u_k(2) - u_k_last(2));  // dot_theta
         }
 
         u_k_last = u_k;
@@ -282,7 +363,6 @@ void MPCController::initializeSolver()
     solver_ = casadi::nlpsol("solver", "ipopt", nlp, solver_opts);
     solver_initialized_ = true;
 }
-
 void MPCController::initializeCompleteSolver()
 {
     // 状态变量: [位置, 速度]
@@ -298,96 +378,102 @@ void MPCController::initializeCompleteSolver()
     // 定义离散时间动态函数
     casadi::Function f("f", {x, u, d}, {x_next}, {"x", "u", "d"}, {"x_next"});
 
-    // 定义优化问题变量
-    casadi::SX U = casadi::SX::sym("U", 4, param_.horizon); // 控制序列
-    casadi::SX X0 = casadi::SX::sym("X0", 6);               // 初始状态（参数）
-    casadi::SX X_ref = casadi::SX::sym("X_ref", 6);         // 参考状态（参数）
-    casadi::SX thr2acc = casadi::SX::sym("thr2acc", 1);     // 油门转化比值（参数）
-    casadi::SX observed_disturbance = casadi::SX::sym("observed_disturbance", 3); // 观测的扰动（参数）
-    casadi::SX u0 = casadi::SX::sym("u_0", 3);                       // 初始输入（参数）
-    // 目标函数
-    casadi::SX obj = 0;
+    // 优化变量
+    casadi::SX U = casadi::SX::sym("U", 4, param_.horizon);         // 4 x N
+    casadi::SX X0 = casadi::SX::sym("X0", 6);                       // 6 x 1
+    casadi::SX X_ref = casadi::SX::sym("X_ref", 6, param_.horizon); // 6 x N
+    casadi::SX thr2acc = casadi::SX::sym("thr2acc", 1);             // 1 x 1
+    casadi::SX observed_disturbance = casadi::SX::sym("observed_disturbance", 3); // 3 x 1
+    casadi::SX u0 = casadi::SX::sym("u_0", 4);                      // 建议直接 4 维
 
-    // 约束条件
+    casadi::SX obj = 0;
     std::vector<casadi::SX> g;
 
-    // 初始状态
     casadi::SX x_current = X0;
 
-    // 转换 Eigen 权重矩阵为 CasADi 格式
-    casadi::SX Q_p_casadi = eigenToCasadi(param_.Q_p);
-    casadi::SX Q_v_casadi = eigenToCasadi(param_.Q_v);
+    casadi::SX Q_p_casadi   = eigenToCasadi(param_.Q_p);
+    casadi::SX Q_v_casadi   = eigenToCasadi(param_.Q_v);
     casadi::SX Q_p_e_casadi = eigenToCasadi(param_.Q_p);
-    casadi::SX R_casadi = eigenToCasadi(param_.R);
-    casadi::SX u_k_last = casadi::SX::zeros(4);
-    u_k_last(0) = u0(0);
-    u_k_last(1) = u0(1);
-    u_k_last(2) = u0(2);
-    // 构建目标函数和约束
+    casadi::SX R_casadi     = eigenToCasadi(param_.R);
+    casadi::SX Q_v_e_casadi = eigenToCasadi(param_.Q_v);
+    
+
+    casadi::SX u_k_last = u0;
+
     for (int k = 0; k < param_.horizon; ++k)
     {
-        // 当前控制输入
         casadi::SX u_k = U(casadi::Slice(), k);
 
-        // 计算下一时刻状态
-        casadi::SXDict args = {{"x", x_current}, {"u", u_k}, {"d", observed_disturbance}};
+        casadi::SXDict args = {
+            {"x", x_current},
+            {"u", u_k},
+            {"d", observed_disturbance}
+        };
         casadi::SX x_next = f(args).at("x_next");
 
-        // 位置和速度误差
-        casadi::SX e_p = x_current(casadi::Slice(0, 3)) - X_ref(casadi::Slice(0, 3));
-        casadi::SX e_v = x_current(casadi::Slice(3, 6)) - X_ref(casadi::Slice(3, 6));
+        // 第 k 步参考
+        casadi::SX x_ref_k = X_ref(casadi::Slice(), k);
 
-        // 目标函数
+        casadi::SX e_p = x_current(casadi::Slice(0, 3)) - x_ref_k(casadi::Slice(0, 3));
+        casadi::SX e_v = x_current(casadi::Slice(3, 6)) - x_ref_k(casadi::Slice(3, 6));
+
         obj += casadi::SX::mtimes(e_p.T(), casadi::SX::mtimes(Q_p_casadi, e_p));
         obj += casadi::SX::mtimes(e_v.T(), casadi::SX::mtimes(Q_v_casadi, e_v));
         obj += casadi::SX::mtimes(u_k.T(), casadi::SX::mtimes(R_casadi, u_k));
-        obj += -u_k(0) * u_k(0) * R_casadi(0) + (u_k(0) - param_.mass * param_.gravity + observed_disturbance(2)) * (u_k(0) - param_.mass * param_.gravity + observed_disturbance(2)) * R_casadi(0);
+
+        obj += -u_k(0) * u_k(0) * R_casadi(0)
+             + (u_k(0) - param_.mass * param_.gravity + observed_disturbance(2))
+             * (u_k(0) - param_.mass * param_.gravity + observed_disturbance(2))
+             * R_casadi(0);
 
         // 控制约束
-        g.push_back(u_k(0) / param_.mass / thr2acc); // 推力
-        g.push_back(u_k(1));                         // roll
-        g.push_back(u_k(2));                         // pitch
-        g.push_back(u_k(3));                         // yaw
+        g.push_back(u_k(0) / param_.mass / thr2acc);
+        g.push_back(u_k(1));
+        g.push_back(u_k(2));
+        g.push_back(u_k(3));
 
-        // g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0))); // dot_thrust
-        // g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1))); // dot_phi
-        // g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2))); // dot_theta
-        if (k > 0)
-        {
-            g.push_back(casadi::SX::abs(u_k_last(0) - u_k(0))); // dot_thrust
-            g.push_back(casadi::SX::abs(u_k_last(1) - u_k(1))); // dot_phi
-            g.push_back(casadi::SX::abs(u_k_last(2) - u_k(2))); // dot_theta
-        }
-        // else
-        // {
-        //     g.push_back(casadi::SX::abs(u0(0) - u_k(0)));
-        //     g.push_back(casadi::SX::abs(u0(1) - u_k(1)));
-        //     g.push_back(casadi::SX::abs(u0(2) - u_k(2)));
-        // }
+        g.push_back(u_k(0) - u_k_last(0));
+        g.push_back(u_k(1) - u_k_last(1));
+        g.push_back(u_k(2) - u_k_last(2));
+        g.push_back(u_k(3) - u_k_last(3));
 
         u_k_last = u_k;
-        // 更新当前状态
         x_current = x_next;
     }
-    // 位置和速度误差
-    casadi::SX e_p = x_current(casadi::Slice(0, 3)) - X_ref(casadi::Slice(0, 3));
-    obj += casadi::SX::mtimes(e_p.T(), casadi::SX::mtimes(Q_p_e_casadi, e_p));
 
-    // 定义优化问题
+    // 终端项：取最后一列参考
+    casadi::SX x_ref_terminal = X_ref(casadi::Slice(), param_.horizon - 1);
+    casadi::SX e_p_terminal =
+        x_current(casadi::Slice(0, 3)) - x_ref_terminal(casadi::Slice(0, 3));
+    obj += casadi::SX::mtimes(e_p_terminal.T(),
+                              casadi::SX::mtimes(Q_p_e_casadi, e_p_terminal));
+
+    casadi::SX e_v_terminal =
+        x_current(casadi::Slice(3, 6)) - x_ref_terminal(casadi::Slice(3, 6));
+    obj += casadi::SX::mtimes(e_v_terminal.T(),
+                            casadi::SX::mtimes(Q_v_e_casadi, e_v_terminal));
+    // 参数向量：显式把 X_ref 展平为列向量
+    casadi::SX P = casadi::SX::vertcat({
+        X0,
+        casadi::SX::reshape(X_ref, 6 * param_.horizon, 1),
+        thr2acc,
+        observed_disturbance,
+        u0
+    });
+
     casadi::SXDict nlp = {
-        {"x", casadi::SX::reshape(U, 4 * param_.horizon, 1)}, // 决策变量仅包含 U
-        {"p", casadi::SX::vertcat({X0, X_ref, thr2acc, observed_disturbance, u0})},     // 参数
+        {"x", casadi::SX::reshape(U, 4 * param_.horizon, 1)},
+        {"p", P},
         {"f", obj},
-        {"g", casadi::SX::vertcat(g)}};
+        {"g", casadi::SX::vertcat(g)}
+    };
 
-    // 设置求解器选项
     casadi::Dict solver_opts;
     solver_opts["ipopt.tol"] = 1e-5;
     solver_opts["ipopt.max_iter"] = 100;
     solver_opts["ipopt.print_level"] = 0;
     solver_opts["print_time"] = 0;
 
-    // 创建求解器
     solver_ = casadi::nlpsol("solver", "ipopt", nlp, solver_opts);
     solver_initialized_ = true;
 }
@@ -477,7 +563,7 @@ casadi::SX MPCController::nonlinearQuadrotorTranslationEulerModel(const casadi::
     return x_next;
 }
 
-casadi::SX MPCController::nonlinearQuadrotorTranslationEulerDisturbanceModel(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d)
+casadi::SX MPCController::nonlinearQuadrotorTranslationEulerDisturbanceDynamics(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d)
 {
     // 提取状态变量
     casadi::SX p = x(casadi::Slice(0, 3)); // 位置
@@ -514,11 +600,17 @@ casadi::SX MPCController::nonlinearQuadrotorTranslationEulerDisturbanceModel(con
     // 速度导数（加速度）
     casadi::SX v_dot = F_inertial / param_.mass + g;
 
-    // 返回状态导数（离散化）
-    casadi::SX x_next = casadi::SX::vertcat({p + param_.dt * p_dot,
-                                             v + param_.dt * v_dot});
+    return casadi::SX::vertcat({p_dot, v_dot});
+}
 
-    return x_next;
+casadi::SX MPCController::nonlinearQuadrotorTranslationEulerDisturbanceModel(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d)
+{
+    casadi::SX k1 = nonlinearQuadrotorTranslationEulerDisturbanceDynamics(x, u, d);
+    casadi::SX k2 = nonlinearQuadrotorTranslationEulerDisturbanceDynamics(x + 0.5 * param_.dt * k1, u, d);
+    casadi::SX k3 = nonlinearQuadrotorTranslationEulerDisturbanceDynamics(x + 0.5 * param_.dt * k2, u, d);
+    casadi::SX k4 = nonlinearQuadrotorTranslationEulerDisturbanceDynamics(x + param_.dt * k3, u, d);
+
+    return x + param_.dt / 6.0 * (k1 + 2 * k2 + 2 * k3 + k4);
 }
 // 辅助函数：欧拉角到旋转矩阵转换
 casadi::SX MPCController::eulerAnglesToRotationMatrix(const casadi::SX &phi,
@@ -563,19 +655,39 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     state_.segment(0, 3) = odom.p.cast<double>();          // 位置
     state_.segment(3, 3) = odom.v.cast<double>();          // 速度
 
+    
     // 构建参考状态
     Eigen::Matrix<double, 6, 1> ref_state;
     ref_state.segment(0, 3) = des.p; // 期望位置
     ref_state.segment(3, 3) = des.v; // 期望速度
+
+    casadi::DM ref_state_dm = casadi::DM::zeros(6, param_.horizon);
+    for(int i = 0; i < param_.horizon; ++i)
+    {
+        for(int j = 0; j < 6; ++j)
+        {
+            ref_state_dm(j, i) = ref_state(j);
+        }
+        ref_state.segment(0, 3) += ref_state.segment(3, 3) * param_.dt
+                         + 0.5 * des.a * param_.dt * param_.dt;
+        ref_state.segment(3, 3) += des.a * param_.dt;
+    }
+
+
+    const double safe_thr2acc = std::min(std::max(thr2acc_, param_.gravity / 0.9), param_.gravity / 0.2);
     casadi::DM thr2acc_dm = casadi::DM::zeros(1,1);
-    thr2acc_dm(0, 0) = thr2acc_;
+    thr2acc_dm(0, 0) = safe_thr2acc;
+    const double thrust_delta_limit = param_.mass * safe_thr2acc * param_.thrust_rate * param_.dt;
+    if (!has_last_control_)
+    {
+        param_.u_last = {param_.mass * param_.gravity, 0.0, 0.0, des.yaw};
+        has_last_control_ = true;
+    }
     // 设置求解器输入
     casadi::DM p = casadi::DM::vertcat({casadi::DM::reshape(
                                             casadi::DM(std::vector<double>(state_.data(), state_.data() + state_.size())),
                                             state_.size(), 1),
-                                        casadi::DM::reshape(
-                                            casadi::DM(std::vector<double>(ref_state.data(), ref_state.data() + ref_state.size())),
-                                            ref_state.size(), 1),
+                                        casadi::DM::reshape(ref_state_dm, 6 * param_.horizon, 1),
                                         thr2acc_dm});
 
     // 求解优化问题
@@ -594,25 +706,21 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         lbg.push_back(0.2);
         ubg.push_back(0.9);
 
-        // // 四元数约束
-        // lbg.push_back(0);
-        // ubg.push_back(0);
-
         // 欧拉角约束
         lbg.push_back(-10); //roll
         ubg.push_back(10);
         lbg.push_back(-10); //pitch
         ubg.push_back(10);
-        lbg.push_back(0);   //yaw
-        ubg.push_back(0);
+        lbg.push_back(des.yaw);   // yaw
+        ubg.push_back(des.yaw);
 
         if (i > 0)
         {
-            lbg.push_back(0); // dot_thrust
-            ubg.push_back(0.05);
-            lbg.push_back(0); // dot_pitch
+            lbg.push_back(-thrust_delta_limit); // dot_thrust
+            ubg.push_back(thrust_delta_limit);
+            lbg.push_back(-0.01); // dot_roll
             ubg.push_back(0.01);
-            lbg.push_back(0); // dot_theta
+            lbg.push_back(-0.01); // dot_pitch
             ubg.push_back(0.01);
         }
         
@@ -620,6 +728,15 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
 
     arg["lbg"] = lbg;
     arg["ubg"] = ubg;
+    casadi::DM x0 = casadi::DM::zeros(4 * param_.horizon, 1);
+    for (int i = 0; i < param_.horizon; ++i)
+    {
+        x0(4 * i + 0, 0) = param_.u_last[0];
+        x0(4 * i + 1, 0) = param_.u_last[1];
+        x0(4 * i + 2, 0) = param_.u_last[2];
+        x0(4 * i + 3, 0) = des.yaw;
+    }
+    arg["x0"] = x0;
     // 调试输出
     // std::cout << "实际参数维度: " << p.size1() << "x" << p.size2()
     //           << " (期望值:13x1)" << std::endl;
@@ -638,10 +755,16 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
                             * Eigen::AngleAxisd(u_opt(2), Eigen::Vector3d::UnitY()) 
                             * Eigen::AngleAxisd(u_opt(1), Eigen::Vector3d::UnitX());
     // 更新控制器输出
-    u.thrust = u_opt(0) / param_.mass / thr2acc_;
-    u.q = imu.q * odom.q.inverse() * des_q;
+    u.thrust = u_opt(0) / param_.mass / safe_thr2acc;
+    u.q = des_q;
+    param_.u_last = {u_opt(0), u_opt(1), u_opt(2), u_opt(3)};
     // std::cout << "thrust:" << u.thrust << std::endl;
     // 填充调试信息
+    const Eigen::Vector3d pos_err = des.p - odom.p;
+    debug_msg_.pos_err_x = pos_err(0);
+    debug_msg_.pos_err_y = pos_err(1);
+    debug_msg_.pos_err_z = pos_err(2);
+
     // debug_msg_.des_p_x = des.p(0);
     // debug_msg_.des_p_y = des.p(1);
     // debug_msg_.des_p_z = des.p(2);
@@ -660,6 +783,8 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     debug_msg_.des_q_w = des_q.w();
 
     debug_msg_.des_thr = u.thrust;
+    debug_msg_.hover_percentage = param_.gravity / safe_thr2acc;
+    debug_msg_.thr_scale_compensate = safe_thr2acc;
 
     return debug_msg_;
 }
@@ -672,7 +797,6 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
                                                              NonlinearESO &observer)
 {
     static std::vector<double> disturbance = {0, 0, 0};
-    static std::vector<double> u_last = {0, 0, 0};
     // 更新当前状态
     state_.segment(0, 3) = odom.p.cast<double>(); // 位置
     state_.segment(3, 3) = odom.v.cast<double>(); // 速度
@@ -681,26 +805,55 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     Eigen::Matrix<double, 6, 1> ref_state;
     ref_state.segment(0, 3) = des.p; // 期望位置
     ref_state.segment(3, 3) = des.v; // 期望速度
+
+    casadi::DM ref_state_dm = casadi::DM::zeros(6, param_.horizon);
+    for(int i = 0; i < param_.horizon; ++i)
+    {
+        for(int j = 0; j < 6; ++j)
+        {
+            ref_state_dm(j, i) = ref_state(j);
+        }
+        ref_state.segment(0, 3) += ref_state.segment(3, 3) * param_.dt
+                         + 0.5 * des.a * param_.dt * param_.dt;
+        ref_state.segment(3, 3) += des.a * param_.dt;
+    }
     // 输入油门比值
+    const double safe_thr2acc = std::min(std::max(thr2acc_, param_.gravity / 0.9), param_.gravity / 0.2);
     casadi::DM thr2acc_dm = casadi::DM::zeros(1, 1);
-    thr2acc_dm(0, 0) = thr2acc_;
+    thr2acc_dm(0, 0) = safe_thr2acc;
+    const double thrust_delta_limit = param_.mass * safe_thr2acc * param_.thrust_rate * param_.dt;
+
+    if (!has_last_control_)
+    {
+        param_.u_last = {param_.mass * param_.gravity, 0.0, 0.0, des.yaw};
+        has_last_control_ = true;
+    }
+
+    const bool use_disturbance = param_.use_observer;
+    if (!use_disturbance)
+    {
+        disturbance = {0.0, 0.0, 0.0};
+    }
+
     // 输入观测扰动
     casadi::DM observed_disturbance = casadi::DM::zeros(3, 1);
     observed_disturbance(0, 0) = disturbance[0];
     observed_disturbance(1, 0) = disturbance[1];
     observed_disturbance(2, 0) = disturbance[2];
-    // 上一时刻输入
-    casadi::DM u_0 = casadi::DM::zeros(3, 1);
-    u_0(0, 0) = u_last[0];
-    u_0(1, 0) = u_last[1];
-    u_0(2, 0) = u_last[2];
+    // 上一时刻输入, 作为热启动和约束的一部分
+    casadi::DM u_0 = casadi::DM::zeros(4, 1);
+    u_0(0, 0) = param_.u_last[0];
+    u_0(1, 0) = param_.u_last[1];
+    u_0(2, 0) = param_.u_last[2];
+    u_0(3, 0) = param_.u_last[3];
+
     // 设置求解器输入
     casadi::DM p = casadi::DM::vertcat({casadi::DM::reshape(
                                             casadi::DM(std::vector<double>(state_.data(), state_.data() + state_.size())),
                                             state_.size(), 1),
                                         casadi::DM::reshape(
-                                            casadi::DM(std::vector<double>(ref_state.data(), ref_state.data() + ref_state.size())),
-                                            ref_state.size(), 1),
+                                            ref_state_dm,
+                                            6 * param_.horizon, 1),
                                         thr2acc_dm,
                                         observed_disturbance,
                                         u_0});
@@ -718,31 +871,46 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
         // lbg.push_back(0.5 * param_.mass * param_.gravity);
         // ubg.push_back(param_.thrust_limit);
 
-        lbg.push_back(0.2);
-        ubg.push_back(0.8);
+        lbg.push_back(param_.thrust_min);
+        ubg.push_back(param_.thrust_max);
 
         // 欧拉角约束
-        lbg.push_back(-30); // roll
-        ubg.push_back(30);
-        lbg.push_back(-30); // pitch
-        ubg.push_back(30);
-        lbg.push_back(0); // yaw
-        ubg.push_back(0);
+        lbg.push_back(-param_.roll_pitch_limit); // roll
+        ubg.push_back(param_.roll_pitch_limit);
+        lbg.push_back(-param_.roll_pitch_limit); // pitch
+        ubg.push_back(param_.roll_pitch_limit);
+        lbg.push_back(des.yaw); // yaw
+        ubg.push_back(des.yaw);
 
-        if (i > 0)
-        {
-            lbg.push_back(0); // dot_thrust
-            ubg.push_back(1.5 * param_.dt);
-            lbg.push_back(0); // dot_pitch
-            ubg.push_back(0.4 * param_.dt);
-            lbg.push_back(0); // dot_theta
-            ubg.push_back(0.4 * param_.dt);
-        }
+        lbg.push_back(-thrust_delta_limit); // dot_thrust
+        ubg.push_back(thrust_delta_limit);
+        lbg.push_back(-param_.attitude_rate * param_.dt); // dot_roll
+        ubg.push_back(param_.attitude_rate * param_.dt);
+        lbg.push_back(-param_.attitude_rate * param_.dt); // dot_pitch
+        ubg.push_back(param_.attitude_rate * param_.dt);
+        lbg.push_back(-param_.attitude_rate * param_.dt); // dot_yaw
+        ubg.push_back(param_.attitude_rate * param_.dt);
     }
 
     arg["lbg"] = lbg;
     arg["ubg"] = ubg;
+    casadi::DM x0 = casadi::DM::zeros(4 * param_.horizon, 1);
+    for (int i = 0; i < param_.horizon; ++i)
+    {
+        x0(4 * i + 0, 0) = param_.u_last[0];
+        x0(4 * i + 1, 0) = param_.u_last[1];
+        x0(4 * i + 2, 0) = param_.u_last[2];
+        x0(4 * i + 3, 0) = des.yaw;
+    }
+    arg["x0"] = x0;
 
+
+    // std::cout << "thr2acc_ = " << thr2acc_ << std::endl;
+    // std::cout << "disturbance = "
+    //         << disturbance[0] << ", "
+    //         << disturbance[1] << ", "
+    //         << disturbance[2] << std::endl;
+    // std::cout << "state = " << state_.transpose() << std::endl;
     // 求解
     casadi::DMDict res = solver_(arg);
     casadi::DM U_opt = casadi::DM::reshape(res.at("x"), 4, param_.horizon);
@@ -756,16 +924,22 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     Eigen::Quaterniond des_q = Eigen::AngleAxisd(u_opt(3), Eigen::Vector3d::UnitZ()) * Eigen::AngleAxisd(u_opt(2), Eigen::Vector3d::UnitY()) * Eigen::AngleAxisd(u_opt(1), Eigen::Vector3d::UnitX());
     
     // 更新观测器
-    observer.update(odom.p, u_opt(0), u_opt.tail<3>());
-    observer.getDisturbanceEstimate(disturbance.data());
+    if (use_disturbance)
+    {
+        observer.update(odom.p, u_opt(0), u_opt.tail<3>());
+        observer.getDisturbanceEstimate(disturbance.data());
+    }
     // 更新控制器输出
-    u.thrust = u_opt(0) / param_.mass / thr2acc_;
-    u.q = imu.q * odom.q.inverse() * des_q;
-    u_last[0] = u_opt(0);
-    u_last[1] = u_opt(1);
-    u_last[2] = u_opt(2);
+    u.thrust = u_opt(0) / param_.mass / safe_thr2acc;
+    u.q = des_q;
+    param_.u_last = {u_opt(0), u_opt(1), u_opt(2), u_opt(3)};
 
     // 填充调试信息
+    const Eigen::Vector3d pos_err = des.p - odom.p;
+    debug_msg_.pos_err_x = pos_err(0);
+    debug_msg_.pos_err_y = pos_err(1);
+    debug_msg_.pos_err_z = pos_err(2);
+
     debug_msg_.des_v_x = disturbance[0];
     debug_msg_.des_v_y = disturbance[1];
     debug_msg_.des_v_z = disturbance[2];
@@ -784,6 +958,14 @@ quadrotor_msgs::Px4ctrlDebug MPCController::calculateControl(const Desired_State
     debug_msg_.des_q_w = des_q.w();
 
     debug_msg_.des_thr = u.thrust;
+    debug_msg_.hover_percentage = param_.gravity / safe_thr2acc;
+    debug_msg_.thr_scale_compensate = safe_thr2acc;
+    // Used for thrust-accel mapping estimation
+    timed_thrust_.push(std::pair<ros::Time, double>(ros::Time::now(), u.thrust));
+    while (timed_thrust_.size() > 100)
+    {
+        timed_thrust_.pop();
+    }
 
     return debug_msg_;
 }

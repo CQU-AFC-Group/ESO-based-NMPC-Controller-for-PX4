@@ -1,4 +1,6 @@
 #include "PX4CtrlFSM.h"
+#include <algorithm>
+#include <cmath>
 #include <uav_utils/converters.h>
 
 using namespace std;
@@ -45,6 +47,8 @@ void PX4CtrlFSM::process()
 
 	ros::Time now_time = ros::Time::now();
 	Controller_Output_t u;
+	static Controller_Output_t last_u;
+	static bool has_last_u = false;
 	Desired_State_t des(odom_data);
 	bool rotor_low_speed_during_land = false;
 
@@ -119,23 +123,15 @@ void PX4CtrlFSM::process()
 				}
 			}
 
-			state = AUTO_TAKEOFF;
-			controller.resetThrustMapping();
-			set_start_pose_for_takeoff_land(odom_data);
-			toggle_offboard_mode(true);				  // toggle on offboard before arm
-			for (int i = 0; i < 10 && ros::ok(); ++i) // wait for 0.1 seconds to allow mode change by FMU // mark
-			{
-				ros::Duration(0.01).sleep();
-				ros::spinOnce();
-			}
-			if (param.takeoff_land.enable_auto_arm)
-			{
-				toggle_arm_disarm(true);
-			}
-			takeoff_land.toggle_takeoff_land_time = now_time;
+				state = AUTO_TAKEOFF;
+				controller.resetThrustMapping();
+				set_start_pose_for_takeoff_land(odom_data);
+				takeoff_land.toggle_takeoff_land_time = now_time;
+				takeoff_land.offboard_requested = false;
+				takeoff_land.arm_requested = false;
 
-			ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_TAKEOFF\033[32m");
-		}
+				ROS_INFO("\033[32m[px4ctrl] MANUAL_CTRL(L1) --> AUTO_TAKEOFF\033[32m");
+			}
 
 		if (rc_data.toggle_reboot) // Try to reboot. EKF2 based PX4 FCU requires reboot when its state estimator goes wrong.
 		{
@@ -226,16 +222,34 @@ void PX4CtrlFSM::process()
 		break;
 	}
 
-	case AUTO_TAKEOFF:
-	{
-		if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
+		case AUTO_TAKEOFF:
 		{
-			des = get_rotor_speed_up_des(now_time);
+			const double takeoff_elapsed = (now_time - takeoff_land.toggle_takeoff_land_time).toSec();
+			if (!takeoff_land.offboard_requested && takeoff_elapsed > 1.0)
+			{
+				toggle_offboard_mode(true);
+				takeoff_land.offboard_requested = true;
+			}
+			if (param.takeoff_land.enable_auto_arm &&
+				takeoff_land.offboard_requested &&
+				!takeoff_land.arm_requested &&
+				state_data.current_state.mode == "OFFBOARD")
+			{
+				toggle_arm_disarm(true);
+				takeoff_land.arm_requested = true;
+			}
+
+			if ((now_time - takeoff_land.toggle_takeoff_land_time).toSec() < AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) // Wait for several seconds to warn prople.
+			{
+				des = get_rotor_speed_up_des(now_time);
 		}
-		else if (odom_data.p(2) >= (takeoff_land.start_pose(2) + param.takeoff_land.height)) // reach the desired height
+			else if (takeoff_elapsed > AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME + 1.5 * param.takeoff_land.height / std::max(param.takeoff_land.speed, 1e-3) &&
+					 std::abs(odom_data.p(2) - (takeoff_land.start_pose(2) + param.takeoff_land.height)) < 0.15 &&
+					 std::abs(odom_data.v(2)) < 0.20)
 		{
 			state = AUTO_HOVER;
 			set_hov_with_odom();
+			des = get_hover_des();
 			ROS_INFO("\033[32m[px4ctrl] AUTO_TAKEOFF --> AUTO_HOVER(L2)\033[32m");
 
 			takeoff_land.delay_trigger.first = true;
@@ -305,12 +319,45 @@ void PX4CtrlFSM::process()
 		break;
 	}
 
+	if (state == MANUAL_CTRL)
+	{
+		land_detector(state, des, odom_data);
+		rc_data.enter_hover_mode = false;
+		rc_data.enter_command_mode = false;
+		rc_data.toggle_reboot = false;
+		takeoff_land_data.triggered = false;
+		return;
+	}
+
+	const bool has_new_odom = recv_new_odom();
+	if (!has_new_odom && has_last_u)
+	{
+		u = last_u;
+		if (param.use_bodyrate_ctrl)
+		{
+			publish_bodyrate_ctrl(u, now_time);
+		}
+		else
+		{
+			publish_attitude_ctrl(u, now_time);
+		}
+		land_detector(state, des, odom_data);
+		rc_data.enter_hover_mode = false;
+		rc_data.enter_command_mode = false;
+		rc_data.toggle_reboot = false;
+		takeoff_land_data.triggered = false;
+		return;
+	}
+
 	// STEP2: estimate thrust model
 	if (state == AUTO_HOVER || state == CMD_CTRL)
 	{
 		// controller.estimateThrustModel(imu_data.a, bat_data.volt, param);
-		controller.estimateThrustModel(imu_data.a,param);
-
+		bool airborne = (odom_data.p(2) > 0.10) || (std::abs(odom_data.v(2)) > 0.20);
+		if (airborne)
+		{
+			controller.estimateThrustModel(imu_data.a, param);
+		}
 	}
 
 	// STEP3: solve and update new control commands
@@ -325,6 +372,8 @@ void PX4CtrlFSM::process()
 		debug_msg.header.stamp = now_time;
 		debug_pub.publish(debug_msg);
 	}
+	last_u = u;
+	has_last_u = true;
 
 	// STEP4: publish control commands to mavros
 	if (param.use_bodyrate_ctrl)
@@ -429,18 +478,10 @@ Desired_State_t PX4CtrlFSM::get_cmd_des()
 
 Desired_State_t PX4CtrlFSM::get_rotor_speed_up_des(const ros::Time now)
 {
-	double delta_t = (now - takeoff_land.toggle_takeoff_land_time).toSec();
-	double des_a_z = exp((delta_t - AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME) * 6.0) * 7.0 - 7.0; // Parameters 6.0 and 7.0 are just heuristic values which result in a saticfactory curve.
-	if (des_a_z > 0.1)
-	{
-		ROS_ERROR("des_a_z > 0.1!, des_a_z=%f", des_a_z);
-		des_a_z = 0.0;
-	}
-
 	Desired_State_t des;
 	des.p = takeoff_land.start_pose.head<3>();
-	des.v = Eigen::Vector3d(0, 0, 0.5);
-	des.a = Eigen::Vector3d(0, 0, des_a_z);
+	des.v = Eigen::Vector3d::Zero();
+	des.a = Eigen::Vector3d::Zero();
 	des.j = Eigen::Vector3d::Zero();
 	des.yaw = takeoff_land.start_pose(3);
 	des.yaw_rate = 0.0;
@@ -452,14 +493,34 @@ Desired_State_t PX4CtrlFSM::get_takeoff_land_des(const double speed)
 {
 	ros::Time now = ros::Time::now();
 	double delta_t = (now - takeoff_land.toggle_takeoff_land_time).toSec() - (speed > 0 ? AutoTakeoffLand_t::MOTORS_SPEEDUP_TIME : 0); // speed > 0 means takeoff
-	// takeoff_land.last_set_cmd_time = now;
+	if (delta_t < 0.0)
+	{
+		delta_t = 0.0;
+	}
 
-	// takeoff_land.start_pose(2) += speed * delta_t;
+	double z_offset = 0.0;
+	double z_vel = 0.0;
+	double z_acc = 0.0;
+	if (speed > 0.0)
+	{
+		const double duration = std::max(1.0, 1.5 * param.takeoff_land.height / std::max(speed, 1e-3));
+		const double tau = std::min(std::max(delta_t / duration, 0.0), 1.0);
+		const double smooth_pos = tau * tau * (3.0 - 2.0 * tau);
+		const double smooth_vel = 6.0 * tau * (1.0 - tau) / duration;
+		const double smooth_acc = 6.0 * (1.0 - 2.0 * tau) / (duration * duration);
+		z_offset = param.takeoff_land.height * smooth_pos;
+		z_vel = param.takeoff_land.height * smooth_vel;
+		z_acc = param.takeoff_land.height * smooth_acc;
+	}
+	else
+	{
+		z_offset = speed * delta_t;
+	}
 
 	Desired_State_t des;
-	des.p = takeoff_land.start_pose.head<3>() + Eigen::Vector3d(0, 0, speed * delta_t);
-	des.v = Eigen::Vector3d(0, 0, speed);
-	des.a = Eigen::Vector3d::Zero();
+	des.p = takeoff_land.start_pose.head<3>() + Eigen::Vector3d(0, 0, z_offset);
+	des.v = Eigen::Vector3d(0, 0, z_vel);
+	des.a = Eigen::Vector3d(0, 0, z_acc);
 	des.j = Eigen::Vector3d::Zero();
 	des.yaw = takeoff_land.start_pose(3);
 	des.yaw_rate = 0.0;

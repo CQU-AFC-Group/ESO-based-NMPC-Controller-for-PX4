@@ -1,0 +1,53 @@
+# 无人机加速度环控制器配置文件
+
+# PD控制器参数
+controller:
+  kp_pos_x: 2.6
+  kp_pos_y: 2.6
+  kp_pos_z: 2.6
+  kd_pos_x: 0.5
+  kd_pos_y: 0.5
+  kd_pos_z: 2.0
+  max_accel_x: 2.0
+  max_accel_y: 2.0
+  vel_lpf_alpha: 0.9
+  fixed_yaw: 0.0
+eso:
+  omega_xy: 5.0
+  omega_z:  6.5
+  mass: 2.30
+  delta: 0.1
+  
+# 轨迹生成参数
+trajectory:
+  type: circle          # 轨迹类型: circle, square, hover
+  radius: 0.5           # 圆形轨迹半径
+  height: 2.0           # 飞行高度
+  center_x: 0.0         # 圆心X坐标
+  center_y: 0.0         # 圆心Y坐标
+  angular_velocity: 0.6 # 角速度
+  square_size: 4.0      # 方形轨迹边长
+  hover_position:
+    x: 0.0              # 悬停位置X坐标
+    y: 0.0              # 悬停位置Y坐标
+    z: 2.0              # 悬停位置Z坐标
+  target_position:
+    x: 1.0              # 目的点X坐标
+    y: 1.0              # 目的点Y坐标
+    z: 2.0              # 目的点Z坐标
+  target_position_1:
+    x: 5.0              # 第一目的点X坐标
+    y: 1.0              # 第一目的点Y坐标
+    z: 8.0              # 第一目的点Z坐标
+  target_position_2:
+    x: 1.0              # 第二目的点X坐标
+    y: 3.0             # 第二目的点Y坐标
+    z: 5.0              # 第二目的点Z坐标
+  target_dwell_seconds: 3.0  # 中间停留时间(秒)
+  target_arrival_tolerance: 0.3 # 判定到达的距离阈值(米)
+
+# 仿真配置
+simulation:
+  enable_visualization: true  # 是否启用可视化标记
+  publish_rate: 100.0        # 提高发布频率以增强控制精度
+  trajectory_rate: 20.0      # 轨迹发布频率

@@ -1,5 +1,9 @@
 Header header
 
+float64 pos_err_x
+float64 pos_err_y
+float64 pos_err_z
+
 float64 des_v_x
 float64 des_v_y
 float64 des_v_z
@@ -30,4 +34,3 @@ float64 err_axisang_ang
 float64 fb_rate_x
 float64 fb_rate_y
 float64 fb_rate_z
-

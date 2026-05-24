@@ -18,6 +18,8 @@
 struct AutoTakeoffLand_t
 {
 	bool landed{true};
+	bool offboard_requested{false};
+	bool arm_requested{false};
 	ros::Time toggle_takeoff_land_time;
 	std::pair<bool, ros::Time> delay_trigger{std::pair<bool, ros::Time>(false, ros::Time(0))};
 	Eigen::Vector4d start_pose;

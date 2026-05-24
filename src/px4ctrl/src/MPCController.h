@@ -9,6 +9,9 @@
 #include <Eigen/Dense>
 #include <stdio.h>
 #include "NonlinearESO.hpp"
+#include <dynamic_reconfigure/server.h>
+#include <memory>
+#include <px4ctrl/MPCControllerConfig.h>
 
 // 定义模型函数指针类型
 using ModelPtr = casadi::SX (*)(const casadi::SX &, const casadi::SX &);
@@ -70,6 +73,24 @@ private:
         double mass;         // 质量 [kg]
         double gravity;      // 重力加速度 [m/s^2]
         double thrust_limit; // 最大推力 [N]
+        double hover_percentage; // 初始悬停油门比例 [0, 1]
+        bool print_thrust_mapping;
+
+        bool use_observer;
+        double q_p_xy;
+        double q_p_z;
+        double q_p_e_xy;
+        double q_p_e_z;
+        double q_v_xy;
+        double q_v_z;
+        double r_thrust;
+        double r_roll_pitch;
+        double r_yaw;
+        double thrust_min;
+        double thrust_max;
+        double roll_pitch_limit;
+        double thrust_rate;
+        double attitude_rate;
     } param_;
     
     // 状态向量: [位置(3), 速度(3)]
@@ -84,6 +105,7 @@ private:
     // CasADi优化器
     casadi::Function solver_;
     bool solver_initialized_;
+    bool has_last_control_;
 
     // 调试信息
     quadrotor_msgs::Px4ctrlDebug debug_msg_;
@@ -98,6 +120,11 @@ private:
 
     double computeDesiredCollectiveThrustSignal(const Eigen::Vector3d &des_acc);
     double fromQuaternion2yaw(Eigen::Quaterniond q);
+    std::shared_ptr<dynamic_reconfigure::Server<px4ctrl::MPCControllerConfig>> reconfigure_server_;
+    void loadMPCParams(const ros::NodeHandle &nh);
+    void applyMPCParamsToMatrices();
+    void syncDynamicReconfigureParams(const ros::NodeHandle &nh);
+    void reconfigureCallback(px4ctrl::MPCControllerConfig &config, uint32_t level);
 
 public:
     
@@ -127,6 +154,8 @@ public:
 
     // 四旋翼位移欧拉角扰动模型
     casadi::SX nonlinearQuadrotorTranslationEulerDisturbanceModel(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d);
+
+    casadi::SX nonlinearQuadrotorTranslationEulerDisturbanceDynamics(const casadi::SX &x, const casadi::SX &u, const casadi::SX &d);
 
     // 四元数乘法
     casadi::SX quaternionMultiply(const casadi::SX &q1, const casadi::SX &q2);

@@ -13,7 +13,7 @@ import os  # 新增：用于文件路径处理
 from datetime import datetime  # 新增：用于生成带时间戳的文件名
 from scipy.spatial.transform import Rotation as R 
 
-sys.path.insert(0, "/home/ris/SUPER_ws/src/px4ctrl/scripts")
+sys.path.insert(0, "/home/mm/sim_control_ws/src/px4ctrl/scripts")
 from quadrotor_animation import QuadrotorAnimator
 
 # 全局变量
@@ -260,7 +260,7 @@ def plot_and_save_results():
     time_array = np.array(time_path)
 
     # 创建保存图片的目录（如果不存在）
-    save_dir = "/home/ris/SUPER_ws/src/px4ctrl/figure/"
+    save_dir = "/home/mm/sim_control_ws/src/px4ctrl/figure/"
     os.makedirs(save_dir, exist_ok=True)
 
     # 创建画布
@@ -421,7 +421,7 @@ def plot_and_save_results():
         history=real_array,
         quaternions=real_q
     )
-    animator.draw_animation(save_path="/home/ris/SUPER_ws/src/px4ctrl/figure/pampc_animation.gif", fps=20)
+    animator.draw_animation(save_path="/home/mm/sim_control_ws/src/px4ctrl/figure/pampc_animation.gif", fps=20)
 
     # 显示图片（可选）
     # plt.show()
